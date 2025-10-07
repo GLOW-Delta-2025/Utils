@@ -7,12 +7,12 @@ A lightweight, cross-platform command parser and builder library for structured 
 CmdLib parses commands in the following format:
 
 ```
-!!device:type:command:{key=val,key2=val2}##
+!!type:command:{key=val,key2=val2}##
 ```
 
 **Example:**
 ```
-!!robot:motor:move:{speed=100,direction=forward}##
+!!REQUEST:SEND_STAR:{speed=3,color=red,brightness=80,size=10}##
 ```
 
 ## Features
@@ -33,16 +33,15 @@ CmdLib parses commands in the following format:
 
 using namespace cmdlib;
 
-String input = "!!robot:motor:move:{speed=100,direction=forward}##";
+String input = "!!REQUEST:SEND_STAR:{speed=3,color=red,brightness=80,size=10}##";
 Command cmd;
 String error;
 
 if (parse(input, cmd, error)) {
-  Serial.println(cmd.device);   // "robot"
-  Serial.println(cmd.type);     // "motor"
-  Serial.println(cmd.command);  // "move"
-  Serial.println(cmd.getParam("speed"));     // "100"
-  Serial.println(cmd.getParam("direction")); // "forward"
+  Serial.println(cmd.type);     // "REQUEST"
+  Serial.println(cmd.command);  // "SEND_STAR"
+  Serial.println(cmd.getParam("speed"));     // "3"
+  Serial.println(cmd.getParam("color")); // "red"
 } else {
   Serial.println("Parse error: " + error);
 }
@@ -52,26 +51,16 @@ if (parse(input, cmd, error)) {
 
 ```cpp
 Command cmd;
-cmd.device = "sensor";
-cmd.type = "temp";
-cmd.command = "read";
-cmd.setParam("unit", "celsius");
-cmd.setParam("precision", "2");
+cmd.type = "CONFIRM";
+cmd.command = "SEND_STAR";
+cmd.setParam("speed", "3");
+cmd.setParam("color", "red");
+cmd.setParam("brightness", "80");
+cmd.setParam("size", "10");
+
 
 String output = cmd.toString();
-// Output: !!sensor:temp:read:{unit=celsius,precision=2}##
-```
-
-### Quoted Values
-
-```cpp
-!!display:lcd:print:{text="Hello World",line=1}##
-```
-
-### Flags (no value)
-
-```cpp
-!!device:system:reset:{force,verbose}##
+// Output: !!CONFIRM:SEND_STAR:{speed=3,color=red,brightness=80,size=10}##
 ```
 
 ## Configuration
@@ -100,7 +89,6 @@ The default maximum is 12 parameters. To change:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `device` | String/string | Device identifier |
 | `type` | String/string | Command type |
 | `command` | String/string | Command name |
 | `params` | Array/map | Key-value parameters |
@@ -122,10 +110,10 @@ The default maximum is 12 parameters. To change:
 
 The parser validates:
 - Prefix `!!` and suffix `##`
-- Proper header format (`device:type:command`)
+- Proper header format (`type:command`)
 - Balanced braces `{}`
 - Proper key-value syntax
 
 ## License
 
-*(Add your license here)*
+Timo's Cookie License usage cost 1 cookie
