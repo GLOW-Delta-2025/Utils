@@ -1,193 +1,131 @@
-# CmdLib — Simple Command Builder & Parser for Arduino and C++
+# CmdLib
 
-## 📖 Overview
+A lightweight, cross-platform command parser and builder library for structured command strings.
 
-`CmdLib` is a lightweight, single-header C++ library that makes it easy to **build** and **parse** structured command strings for serial communication between devices.
+## Format
 
-It’s designed for **Arduino environments** (but also works on desktop C++), and follows this format:
+CmdLib parses commands in the following format:
 
-!![device]:[type]:[command]:{[key=value],[key=value]}##
+```
+!!device:type:command:{key=val,key2=val2}##
+```
 
+**Example:**
+```
+!!robot:motor:move:{speed=100,direction=forward}##
+```
 
-### 🔹 Example
+## Features
 
-!!ARM1:REQUEST:SEND_STAR:{speed=3,color=red,brightness=80,size=10}##
+- **Cross-platform**: Works on both Arduino and standard C++ (STL)
+- **Automatic detection**: Automatically uses Arduino mode when `ARDUINO` is defined
+- **Simple API**: Easy-to-use command building and parsing
+- **Flexible parameters**: Supports key-value pairs and flags
+- **Quoted values**: Parse values with spaces using quotes
+- **Small footprint**: Arduino version uses fixed arrays (no dynamic allocation)
 
+## Usage
 
-And the confirmation could look like:
+### Basic Parsing
 
-!!ARM1:CONFIRM:SEND_STAR:{speed=3,color=red,brightness=80,size=10}##
-
-
----
-
-## ⚙️ Features
-
-✅ Build formatted command strings easily  
-✅ Parse incoming commands into structured data  
-✅ Retrieve parameters by key  
-✅ Works on **Arduino** and **standard C++**  
-✅ Header-only — just drop in `CmdLib.h`  
-✅ Arduino version uses fixed-size arrays (no `std::map` or dynamic allocation)
-
----
-
-## 📦 File Structure
-
-CmdLib/
-├── CmdLib.h # The single-header library
-└── examples/
-└── CmdLib_SerialExample/
-└── CmdLib_SerialExample.ino # Arduino demo with Serial read
-
-
----
-
-## 🚀 Installation
-
-### 🧩 Option 1 — Add to Arduino Project
-1. Copy `CmdLib.h` into your Arduino sketch folder.
-2. `#include "CmdLib.h"` in your `.ino` file.
-
-### 🧰 Option 2 — Include in a C++ Project
 ```cpp
 #include "CmdLib.h"
 
-Then compile normally. No dependencies required.
-🧠 Usage (Arduino Example)
+using namespace cmdlib;
 
+String input = "!!robot:motor:move:{speed=100,direction=forward}##";
+Command cmd;
+String error;
+
+if (parse(input, cmd, error)) {
+  Serial.println(cmd.device);   // "robot"
+  Serial.println(cmd.type);     // "motor"
+  Serial.println(cmd.command);  // "move"
+  Serial.println(cmd.getParam("speed"));     // "100"
+  Serial.println(cmd.getParam("direction")); // "forward"
+} else {
+  Serial.println("Parse error: " + error);
+}
+```
+
+### Building Commands
+
+```cpp
+Command cmd;
+cmd.device = "sensor";
+cmd.type = "temp";
+cmd.command = "read";
+cmd.setParam("unit", "celsius");
+cmd.setParam("precision", "2");
+
+String output = cmd.toString();
+// Output: !!sensor:temp:read:{unit=celsius,precision=2}##
+```
+
+### Quoted Values
+
+```cpp
+!!display:lcd:print:{text="Hello World",line=1}##
+```
+
+### Flags (no value)
+
+```cpp
+!!device:system:reset:{force,verbose}##
+```
+
+## Configuration
+
+### Arduino Mode
+
+Arduino mode is automatically enabled when `ARDUINO` is defined. You can also force it:
+
+```cpp
+#define CMDLIB_ARDUINO
 #include "CmdLib.h"
+```
 
-String inputBuffer;
+### Maximum Parameters (Arduino only)
 
-void setup() {
-  Serial.begin(115200);
-  Serial.println("Command Parser Ready");
-}
+The default maximum is 12 parameters. To change:
 
-void processCommand(const String &cmdStr) {
-  cmdlib::Command cmd;
-  String err;
-
-  if (!cmdlib::parse(cmdStr, cmd, err)) {
-    Serial.print("Parse error: ");
-    Serial.println(err);
-    return;
-  }
-
-  Serial.println("---- Command Received ----");
-  Serial.print("Device: "); Serial.println(cmd.device);
-  Serial.print("Type: "); Serial.println(cmd.type);
-  Serial.print("Command: "); Serial.println(cmd.command);
-
-  for (int i = 0; i < cmd.paramCount; ++i) {
-    Serial.print("  ");
-    Serial.print(cmd.params[i].key);
-    Serial.print(" = ");
-    Serial.println(cmd.params[i].value);
-  }
-
-  // Example response for REQUEST
-  if (cmd.type == "REQUEST") {
-    cmdlib::Command confirm;
-    confirm.device = cmd.device;
-    confirm.type = "CONFIRM";
-    confirm.command = cmd.command;
-    for (int i = 0; i < cmd.paramCount; ++i) {
-      confirm.setParam(cmd.params[i].key, cmd.params[i].value);
-    }
-    Serial.print("Response -> ");
-    Serial.println(confirm.toString());
-  }
-}
-
-void loop() {
-  while (Serial.available()) {
-    char c = Serial.read();
-    inputBuffer += c;
-    if (inputBuffer.endsWith("##")) {
-      processCommand(inputBuffer);
-      inputBuffer = "";
-    }
-    if (inputBuffer.length() > 512) inputBuffer = "";
-  }
-}
-
-🧩 Example Output
-
-Send via Serial Monitor:
-
-!!ARM1:REQUEST:SEND_STAR:{speed=3,color=red,brightness=80,size=10}##
-
-Arduino Output:
-
-Command Parser Ready
----- Command Received ----
-Device: ARM1
-Type: REQUEST
-Command: SEND_STAR
-  speed = 3
-  color = red
-  brightness = 80
-  size = 10
-Response -> !!ARM1:CONFIRM:SEND_STAR:{speed=3,color=red,brightness=80,size=10}##
----------------------------
-
-⚙️ Advanced
-Building Commands Manually
-
-cmdlib::Command cmd;
-cmd.device = "ARM1";
-cmd.type = "REQUEST";
-cmd.command = "MOVE";
-cmd.setParam("speed", "5");
-cmd.setParam("angle", "90");
-
-Serial.println(cmd.toString());
-// -> !!ARM1:REQUEST:MOVE:{speed=5,angle=90}##
-
-Getting Parameters
-
-String speed = cmd.getParam("speed", "0");
-
-🔧 Configuration
-Option	Default	Description
-CMDLIB_MAX_PARAMS	12	Max number of parameters stored in Arduino mode
-CMDLIB_ARDUINO	(auto)	Force Arduino mode manually if needed
-
-Example:
-
+```cpp
 #define CMDLIB_MAX_PARAMS 20
 #include "CmdLib.h"
+```
 
-🧱 Supported Platforms
+## API Reference
 
-    ✅ Arduino (UNO, Mega, ESP32, RP2040, etc.)
+### Command Structure
 
-    ✅ PlatformIO
+| Field | Type | Description |
+|-------|------|-------------|
+| `device` | String/string | Device identifier |
+| `type` | String/string | Command type |
+| `command` | String/string | Command name |
+| `params` | Array/map | Key-value parameters |
 
-    ✅ Desktop C++ (Linux, macOS, Windows)
+### Methods
 
-🧰 License
+- **`setParam(key, value)`** - Set or update a parameter
+- **`getParam(key, default="")`** - Get parameter value (returns default if not found)
+- **`toString()`** - Convert command to string format
+- **`clear()`** - Reset command to empty state
 
-MIT License — free to use, modify, and distribute.
-💬 Example Protocol Flow
-Step	Sender	Message
-1	Controller	!!ARM1:REQUEST:SEND_STAR:{speed=3,color=red}##
-2	Device	!!ARM1:CONFIRM:SEND_STAR:{speed=3,color=red}##
-3	Controller	Ready for next command
-🌟 Roadmap
+### Functions
 
-Command dispatcher (onCommand("SEND_STAR", handler))
+- **`bool parse(input, cmd, error)`** - Parse command string
+  - Returns `true` on success
+  - Returns `false` on failure (error message in `error` parameter)
 
-Typed getters (getInt(), getFloat(), etc.)
+## Error Handling
 
-Lightweight CRC or checksum field support
+The parser validates:
+- Prefix `!!` and suffix `##`
+- Proper header format (`device:type:command`)
+- Balanced braces `{}`
+- Proper key-value syntax
 
-    Stream parsing for long serial messages
+## License
 
-💡 Tip
-
-You can easily extend this library to trigger functions when a certain command arrives, for example:
-
-if (cmd.command == "MOVE_ARM") moveArm(cmd.getParam("speed"));
+*(Add your license here)*
