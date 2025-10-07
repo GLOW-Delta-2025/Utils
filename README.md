@@ -114,6 +114,17 @@ The parser validates:
 - Balanced braces `{}`
 - Proper key-value syntax
 
+## Testing Locally
+
+Build and run the included harness to validate the STL version of the library:
+
+```bash
+g++ -std=c++17 CmdLibTest.cpp -o CmdLibTest
+./CmdLibTest
+```
+
+All tests should pass with a summary similar to `Summary: 4 passed, 0 failed`.
+
 ## License
 
 Timo's Cookie License usage cost 1 cookie
