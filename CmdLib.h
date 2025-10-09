@@ -1,13 +1,4 @@
-// CmdLib.h
-// Command builder + parser simplified: no positional params — all params MUST be named (key=value).
-// Format:
-//   !![MSG_KIND:]COMMAND{key=value,key=value}##
-// Examples:
-//   !!REQUEST:MAKE_STAR{speed=100,color=red,brightness=80,size=20}##
-//   !!CONFIRM:MAKE_STAR##   (no params)
-//
-// Define CMDLIB_ARDUINO (or let ARDUINO be defined) for the Arduino version.
-
+// CmdLib.h (modified: removed positional params — only namedParams)
 #ifndef CMDLIB_H
 #define CMDLIB_H
 
@@ -28,9 +19,12 @@
 namespace cmdlib {
 
 #ifdef CMDLIB_ARDUINO
-// -------------------- Arduino Version --------------------
+// -------------------- Arduino Version (named-only params) --------------------
 #ifndef CMDLIB_MAX_PARAMS
 #define CMDLIB_MAX_PARAMS 12
+#endif
+#ifndef CMDLIB_MAX_HEADER_PARTS
+#define CMDLIB_MAX_HEADER_PARTS 8
 #endif
 
 struct NamedParam {
@@ -39,26 +33,39 @@ struct NamedParam {
 };
 
 struct Command {
-  // Message kind (optional) and command name
+  // Leading header parts (source, destination, etc.), e.g. "MASTER", "[ARM#]"
+  String headers[CMDLIB_MAX_HEADER_PARTS];
+  int headerCount = 0;
+
+  // The message kind and the command name
   String msgKind;
   String command;
 
-  // Only named params (no positional)
+  // Named params only
   NamedParam namedParams[CMDLIB_MAX_PARAMS];
   int namedCount = 0;
 
   void clear() {
+    headerCount = 0;
     msgKind = "";
     command = "";
     namedCount = 0;
     for (int i = 0; i < CMDLIB_MAX_PARAMS; ++i) {
-      namedParams[i].key = "";
-      namedParams[i].value = "";
+      if (i < CMDLIB_MAX_HEADER_PARTS) headers[i] = "";
+      namedParams[i].key = ""; namedParams[i].value = "";
     }
   }
 
-  // Named param helpers
-  bool setParam(const String &k, const String &v) {
+  // header helpers
+  bool addHeader(const String &h) {
+    if (headerCount >= CMDLIB_MAX_HEADER_PARTS) return false;
+    headers[headerCount++] = h;
+    return true;
+  }
+  String getHeader(int i) const { if (i < 0 || i >= headerCount) return ""; return headers[i]; }
+
+  // named param helpers
+  bool setNamed(const String &k, const String &v) {
     for (int i = 0; i < namedCount; ++i) {
       if (namedParams[i].key == k) { namedParams[i].value = v; return true; }
     }
@@ -73,18 +80,27 @@ struct Command {
     return def;
   }
 
-  // Build string (only named params)
+  // Build string using named params (if any)
   String toString() const {
     String out = "!!";
-    if (msgKind.length() > 0) {
-      out += msgKind;
-      out += ":";
+    for (int i = 0; i < headerCount; ++i) {
+      if (i) out += ":";
+      out += headers[i];
     }
-    out += command;
+    if (msgKind.length() > 0) {
+      if (headerCount) out += ":";
+      out += msgKind;
+    }
+    if (command.length() > 0) {
+      out += ":";
+      out += command;
+    }
     if (namedCount > 0) {
       out += "{";
       for (int i = 0; i < namedCount; ++i) {
-        out += namedParams[i].key; out += "="; out += namedParams[i].value;
+        out += namedParams[i].key;
+        out += "=";
+        out += namedParams[i].value;
         if (i < namedCount - 1) out += ",";
       }
       out += "}";
@@ -94,17 +110,17 @@ struct Command {
   }
 };
 
-// Utility trim
+// Utility: trim spaces
 static inline String trimStr(const String &s) {
-  int a = 0;
-  while (a < s.length() && isspace(s.charAt(a))) ++a;
-  int b = s.length() - 1;
-  while (b >= a && isspace(s.charAt(b))) --b;
-  if (b < a) return "";
-  return s.substring(a, b + 1);
+  int start = 0;
+  while (start < s.length() && isspace(s.charAt(start))) start++;
+  int end = s.length() - 1;
+  while (end >= start && isspace(s.charAt(end))) end--;
+  if (end < start) return "";
+  return s.substring(start, end + 1);
 }
 
-// Parse (Arduino). Requires named params (key=value). Rejects tokens without '='.
+// Parse function for Arduino String (named-only)
 static inline bool parse(const String &input, Command &out, String &error) {
   out.clear();
   error = "";
@@ -114,54 +130,56 @@ static inline bool parse(const String &input, Command &out, String &error) {
 
   int braceOpen = input.indexOf('{');
   int braceClose = input.lastIndexOf('}');
+
   int headerEnd = (braceOpen != -1) ? braceOpen : input.lastIndexOf("##");
   if (headerEnd == -1) { error = "Malformed header"; return false; }
-
   String header = input.substring(2, headerEnd);
   if (header.endsWith(":")) header = header.substring(0, header.length() - 1);
 
-  // split header into (optional) msgKind and command using last colon
-  int lastColon = header.lastIndexOf(':');
-  if (lastColon == -1) {
-    out.msgKind = "";
-    out.command = trimStr(header);
-  } else {
-    out.msgKind = trimStr(header.substring(0, lastColon));
-    out.command = trimStr(header.substring(lastColon + 1));
+  int start = 0;
+  while (start < header.length()) {
+    int idx = header.indexOf(':', start);
+    String token;
+    if (idx == -1) { token = trimStr(header.substring(start)); start = header.length(); }
+    else { token = trimStr(header.substring(start, idx)); start = idx + 1; }
+    if (token.length() > 0) {
+      if (!out.addHeader(token)) { error = "Too many header parts"; return false; }
+    }
   }
 
-  if (out.command.length() == 0) { error = "Empty command"; return false; }
+  if (out.headerCount == 0) { error = "Empty header"; return false; }
 
-  // parse params if present — **ONLY named params allowed**
+  if (out.headerCount >= 2) {
+    out.command = out.headers[out.headerCount - 1];
+    out.msgKind = out.headers[out.headerCount - 2];
+    out.headerCount -= 2;
+  } else {
+    out.command = out.headers[out.headerCount - 1];
+    out.msgKind = "";
+    out.headerCount -= 1;
+  }
+
   if (braceOpen != -1) {
     if (braceClose == -1 || braceClose < braceOpen) { error = "Malformed braces"; return false; }
     String inside = input.substring(braceOpen + 1, braceClose);
-
     int i = 0;
     while (i < inside.length()) {
       while (i < inside.length() && isspace(inside.charAt(i))) i++;
       if (i >= inside.length()) break;
       int startKey = i;
-      // read until '=' or ','
-      while (i < inside.length() && inside.charAt(i) != '=' && inside.charAt(i) != ',') i++;
-      if (i >= inside.length() || inside.charAt(i) == ',') {
-        // token without '=' -> positional or malformed; positional not supported
-        String token = trimStr(inside.substring(startKey, i));
-        if (token.length() > 0) {
-          error = "Positional params not supported; expected key=value";
-          return false;
-        }
-        if (i < inside.length() && inside.charAt(i) == ',') i++;
-        continue;
-      }
-
-      String key = trimStr(inside.substring(startKey, i));
-      i++; // skip '='
-      int startVal = i;
       while (i < inside.length() && inside.charAt(i) != ',') i++;
-      String val = trimStr(inside.substring(startVal, i));
-      if (key.length() == 0) { error = "Empty param key"; return false; }
-      out.setParam(key, val);
+      String token = trimStr(inside.substring(startKey, i));
+      if (token.length() > 0) {
+        int eq = token.indexOf('=');
+        if (eq == -1) {
+          // key only, empty value
+          out.setNamed(token, "");
+        } else {
+          String key = trimStr(token.substring(0, eq));
+          String val = trimStr(token.substring(eq + 1));
+          out.setNamed(key, val);
+        }
+      }
       if (i < inside.length() && inside.charAt(i) == ',') i++;
     }
   }
@@ -170,26 +188,31 @@ static inline bool parse(const String &input, Command &out, String &error) {
 }
 
 #else
-// -------------------- Standard C++ Version --------------------
+// -------------------- Standard C++ Version (named-only params) --------------------
 using std::string;
 using std::vector;
 using std::unordered_map;
 using std::size_t;
 
 struct Command {
+  vector<string> headers; // dynamic
   string msgKind;
   string command;
-
-  // Only named params
   unordered_map<string, string> namedParams;
 
   void clear() {
+    headers.clear();
     msgKind.clear();
     command.clear();
     namedParams.clear();
   }
 
-  void setParam(const string &k, const string &v) { namedParams[k] = v; }
+  // header helpers
+  void addHeader(const string &h) { headers.push_back(h); }
+  string getHeader(size_t i) const { return (i < headers.size()) ? headers[i] : string(); }
+
+  // named param helpers
+  void setNamed(const string &k, const string &v) { namedParams[k] = v; }
   string getNamed(const string &k, const string &def = "") const {
     auto it = namedParams.find(k);
     return (it == namedParams.end()) ? def : it->second;
@@ -198,8 +221,17 @@ struct Command {
   string toString() const {
     std::ostringstream ss;
     ss << "!!";
-    if (!msgKind.empty()) ss << msgKind << ":";
-    ss << command;
+    for (size_t i = 0; i < headers.size(); ++i) {
+      if (i) ss << ":";
+      ss << headers[i];
+    }
+    if (!msgKind.empty()) {
+      if (!headers.empty()) ss << ":";
+      ss << msgKind;
+    }
+    if (!command.empty()) {
+      ss << ":" << command;
+    }
     if (!namedParams.empty()) {
       ss << "{";
       bool first = true;
@@ -215,6 +247,7 @@ struct Command {
   }
 };
 
+// trim helper
 static inline string trim(const string &s) {
   size_t a = 0;
   while (a < s.size() && isspace((unsigned char)s[a])) ++a;
@@ -233,23 +266,34 @@ static inline bool parse(const string &input, Command &out, string &error) {
 
   auto braceOpen = input.find('{');
   auto braceClose = input.rfind('}');
+
   size_t headerEnd = (braceOpen != string::npos) ? braceOpen : input.size() - 2;
+  if (headerEnd == string::npos) { error = "Malformed header"; return false; }
   string header = input.substr(2, headerEnd - 2);
   if (!header.empty() && header.back() == ':') header.pop_back();
 
-  // split by last ':'
-  size_t lastColon = header.rfind(':');
-  if (lastColon == string::npos) {
-    out.msgKind.clear();
-    out.command = trim(header);
-  } else {
-    out.msgKind = trim(header.substr(0, lastColon));
-    out.command = trim(header.substr(lastColon + 1));
+  size_t i = 0;
+  while (i < header.size()) {
+    size_t idx = header.find(':', i);
+    string token;
+    if (idx == string::npos) { token = trim(header.substr(i)); i = header.size(); }
+    else { token = trim(header.substr(i, idx - i)); i = idx + 1; }
+    if (!token.empty()) out.addHeader(token);
   }
 
-  if (out.command.empty()) { error = "Empty command"; return false; }
+  if (out.headers.size() == 0) { error = "Empty header"; return false; }
 
-  // parse params (named only)
+  if (out.headers.size() >= 2) {
+    out.command = out.headers.back();
+    out.msgKind = out.headers[out.headers.size() - 2];
+    out.headers.pop_back();
+    out.headers.pop_back();
+  } else {
+    out.command = out.headers.back();
+    out.msgKind.clear();
+    out.headers.pop_back();
+  }
+
   if (braceOpen != string::npos) {
     if (braceClose == string::npos || braceClose < braceOpen) { error = "Malformed braces"; return false; }
     string inside = input.substr(braceOpen + 1, braceClose - (braceOpen + 1));
@@ -258,24 +302,19 @@ static inline bool parse(const string &input, Command &out, string &error) {
       while (p < inside.size() && isspace((unsigned char)inside[p])) ++p;
       if (p >= inside.size()) break;
       size_t startKey = p;
-      while (p < inside.size() && inside[p] != '=' && inside[p] != ',') ++p;
-      if (p >= inside.size() || inside[p] == ',') {
-        // token without '=' -> positional style -> not allowed
-        string token = trim(inside.substr(startKey, p - startKey));
-        if (!token.empty()) {
-          error = "Positional params not supported; expected key=value";
-          return false;
-        }
-        if (p < inside.size() && inside[p] == ',') ++p;
-        continue;
-      }
-      string key = trim(inside.substr(startKey, p - startKey));
-      ++p; // skip '='
-      size_t startVal = p;
       while (p < inside.size() && inside[p] != ',') ++p;
-      string val = trim(inside.substr(startVal, p - startVal));
-      if (key.empty()) { error = "Empty param key"; return false; }
-      out.setParam(key, val);
+      string token = trim(inside.substr(startKey, p - startKey));
+      if (!token.empty()) {
+        auto eq = token.find('=');
+        if (eq == string::npos) {
+          // key only -> empty value
+          out.setNamed(token, "");
+        } else {
+          string key = trim(token.substr(0, eq));
+          string val = trim(token.substr(eq + 1));
+          out.setNamed(key, val);
+        }
+      }
       if (p < inside.size() && inside[p] == ',') ++p;
     }
   }
@@ -288,3 +327,11 @@ static inline bool parse(const string &input, Command &out, string &error) {
 } // namespace cmdlib
 
 #endif // CMDLIB_H
+
+
+// ---------- test_cmdlib.cpp (updated tests: named-only params) ----------
+
+// Simple unit tests for CmdLib.h (named-only variant)
+// Compile: g++ -std=c++17 test_cmdlib.cpp -o test_cmdlib
+// Run: ./test_cmdlib
+
