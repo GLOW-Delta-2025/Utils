@@ -1,130 +1,218 @@
 # CmdLib
 
-A lightweight, cross-platform command parser and builder library for structured command strings.
+A lightweight, cross-platform command **parser & builder** for structured command strings used by microcontrollers and host software.
+
+---
 
 ## Format
 
-CmdLib parses commands in the following format:
+CmdLib now expects **only named parameters** and **no location/header parts**.  
+Valid command forms:
 
-```
-!!type:command:{key=val,key2=val2}##
-```
+- With message kind (e.g. `REQUEST`, `CONFIRM`, `ERROR`):  
+  `!!MSG_KIND:COMMAND{key=value,key2=value2}##`  
+  Example: `!!REQUEST:MAKE_STAR{speed=100,color=red,brightness=80,size=20}##`
 
-**Example:**
-```
-!!REQUEST:SEND_STAR:{speed=3,color=red,brightness=80,size=10}##
-```
+- Command-only (no message kind):  
+  `!!COMMAND{key=value,...}##`  
+  Example: `!!MAKE_STAR{speed=100,color=red}##`
+
+- Confirmation/no-params (braces optional):  
+  `!!CONFIRM:MAKE_STAR##` or `!!MAKE_STAR##`
+
+**Important:** positional params (like `100,red,80`) are **no longer supported** — every parameter inside `{}` **must** be `key=value`. If any token has no `=`, the parser returns an error.
+
+---
 
 ## Features
 
-- **Cross-platform**: Works on both Arduino and standard C++ (STL)
-- **Automatic detection**: Automatically uses Arduino mode when `ARDUINO` is defined
-- **Simple API**: Easy-to-use command building and parsing
-- **Flexible parameters**: Supports key-value pairs and flags
-- **Quoted values**: Parse values with spaces using quotes
-- **Small footprint**: Arduino version uses fixed arrays (no dynamic allocation)
+- Cross-platform: works on **Arduino** (uses `String`) and **standard C++** (uses `std::string`)
+- Automatic Arduino mode detection when `ARDUINO` is defined (or define `CMDLIB_ARDUINO`)
+- Small footprint: Arduino build uses fixed arrays (no dynamic allocation)
+- Simple API: build commands programmatically and serialize with `toString()`; parse strings with `parse()`
+- All parameters are **named** (`key=value`) — consistent and explicit
 
-## Usage
+> Note: the library does **not** accept positional parameters, and it does not expect or parse location tokens such as `MASTER` or `[ARM#]`. Use the `MSG_KIND` field for `REQUEST` / `CONFIRM` / `ERROR`, etc.
 
-### Basic Parsing
+---
+
+## Quick migration notes
+
+- **Old (positional / location):**  
+  `!!MASTER:[ARM#]:REQUEST:MAKE_STAR{100,red,80,20}##` → **invalid now**
+
+- **New (named only):**  
+  `!!REQUEST:MAKE_STAR{speed=100,color=red,brightness=80,size=20}##`
+
+- Confirmation: `!!MASTER:CONFIRM:MAKE_STAR##` → `!!CONFIRM:MAKE_STAR##` (no location tokens)
+
+---
+
+## API & Usage
+
+The library exposes a `Command` struct and a `parse()` function in the `cmdlib` namespace.
+
+### C++ (STL) example
 
 ```cpp
+#include <iostream>
 #include "CmdLib.h"
 
-using namespace cmdlib;
+int main() {
+  std::string in = "!!REQUEST:MAKE_STAR{speed=100,color=red,brightness=80,size=20}##";
+  cmdlib::Command cmd;
+  std::string err;
 
-String input = "!!REQUEST:SEND_STAR:{speed=3,color=red,brightness=80,size=10}##";
-Command cmd;
-String error;
+  if (cmdlib::parse(in, cmd, err)) {
+    std::cout << "msgKind: " << cmd.msgKind << "
+";    // "REQUEST"
+    std::cout << "command: " << cmd.command << "
+";    // "MAKE_STAR"
+    std::cout << "speed: " << cmd.getNamed("speed") << "
+"; // "100"
+  } else {
+    std::cerr << "Parse error: " << err << "
+";
+  }
 
-if (parse(input, cmd, error)) {
-  Serial.println(cmd.type);     // "REQUEST"
-  Serial.println(cmd.command);  // "SEND_STAR"
-  Serial.println(cmd.getParam("speed"));     // "3"
-  Serial.println(cmd.getParam("color")); // "red"
-} else {
-  Serial.println("Parse error: " + error);
+  // Build a command:
+  cmdlib::Command out;
+  out.msgKind = "CONFIRM";
+  out.command = "SEND_STAR";
+  out.setNamed("speed", "3");
+  out.setNamed("color", "red");
+  std::string s = out.toString();
+  // s: !!CONFIRM:SEND_STAR{speed=3,color=red}##
 }
 ```
 
-### Building Commands
+### Arduino example
 
 ```cpp
-Command cmd;
-cmd.type = "CONFIRM";
-cmd.command = "SEND_STAR";
-cmd.setParam("speed", "3");
-cmd.setParam("color", "red");
-cmd.setParam("brightness", "80");
-cmd.setParam("size", "10");
+#include "CmdLib.h"
 
+void setup() {
+  Serial.begin(115200);
+  cmdlib::Command cmd;
+  String err;
+  String in = "!!REQUEST:MAKE_STAR{speed=100,color=red,brightness=80,size=20}##";
+  if (cmdlib::parse(in, cmd, err)) {
+    Serial.println(cmd.msgKind);         // "REQUEST"
+    Serial.println(cmd.command);         // "MAKE_STAR"
+    Serial.println(cmd.getNamed("color")); // "red"
+  } else {
+    Serial.print("Parse error: "); Serial.println(err);
+  }
 
-String output = cmd.toString();
-// Output: !!CONFIRM:SEND_STAR:{speed=3,color=red,brightness=80,size=10}##
+  cmdlib::Command out;
+  out.msgKind = "CONFIRM";
+  out.command = "SEND_STAR";
+  out.setNamed("speed", "3");
+  Serial.println(out.toString()); // "!!CONFIRM:SEND_STAR{speed=3}##"
+}
+
+void loop() { }
 ```
+
+---
+
+## Error handling & validation
+
+The parser validates and returns an error message when:
+
+- Missing prefix `!!` or missing suffix `##`
+- Unbalanced or malformed braces `{}` (if present)
+- Empty command name
+- **Positional-style tokens** inside braces (a token without `=` causes an error: _"Positional params not supported; expected key=value"_)
+- Empty parameter key (e.g. `=value`) is rejected
+
+When `parse()` fails it returns `false` and fills the `error` string (or `String` on Arduino) with a short description.
+
+---
 
 ## Configuration
 
-### Arduino Mode
+### Arduino mode
+- Automatically enabled when `ARDUINO` is defined.
+- You may explicitly force Arduino mode by defining `CMDLIB_ARDUINO` prior to including the header.
 
-Arduino mode is automatically enabled when `ARDUINO` is defined. You can also force it:
-
-```cpp
-#define CMDLIB_ARDUINO
-#include "CmdLib.h"
-```
-
-### Maximum Parameters (Arduino only)
-
-The default maximum is 12 parameters. To change:
+### Max parameters (Arduino only)
+- Default maximum: **12** parameters.
+- Override by defining `CMDLIB_MAX_PARAMS` before including:
 
 ```cpp
 #define CMDLIB_MAX_PARAMS 20
 #include "CmdLib.h"
 ```
 
-## API Reference
+---
 
-### Command Structure
+## Unit tests
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `type` | String/string | Command type |
-| `command` | String/string | Command name |
-| `params` | Array/map | Key-value parameters |
-
-### Methods
-
-- **`setParam(key, value)`** - Set or update a parameter
-- **`getParam(key, default="")`** - Get parameter value (returns default if not found)
-- **`toString()`** - Convert command to string format
-- **`clear()`** - Reset command to empty state
-
-### Functions
-
-- **`bool parse(input, cmd, error)`** - Parse command string
-  - Returns `true` on success
-  - Returns `false` on failure (error message in `error` parameter)
-
-## Error Handling
-
-The parser validates:
-- Prefix `!!` and suffix `##`
-- Proper header format (`type:command`)
-- Balanced braces `{}`
-- Proper key-value syntax
-
-## Testing Locally
-
-Build and run the included harness to validate the STL version of the library:
+A suite of unit tests is included (STL/C++ and Arduino sketches). To run the C++ tests:
 
 ```bash
-g++ -std=c++17 CmdLibTest.cpp -o CmdLibTest
-./CmdLibTest
+g++ -std=c++17 CmdLib_test.cpp -o CmdLib_test
+./CmdLib_test
 ```
 
-All tests should pass with a summary similar to `Summary: 4 passed, 0 failed`.
+Expected output (example):
+
+```
+Tests run: 10
+All tests PASSED
+```
+
+(Exact message count may vary; the important bit is zero failures.)
+
+---
+
+## API Reference (summary)
+
+**Struct `cmdlib::Command`** (fields / methods)
+
+- `std::string` / `String` fields:
+  - `msgKind` — optional (e.g. `REQUEST`, `CONFIRM`)
+  - `command` — required (e.g. `MAKE_STAR`)
+- `void setNamed(key, value)` — set or update a named parameter
+- `std::string / String getNamed(key, default="")` — read parameter value
+- `std::string / String toString()` — serialize to command string
+- `void clear()` — clear the command
+
+**Function**
+
+- `bool parse(input, Command &out, std::string &error)` (or `String &error` in Arduino)
+  - Parses `input` into `out`
+  - Returns `true` on success, `false` on error (error message set)
+
+---
+
+## Examples (common commands)
+
+- Make star (request):
+  ```
+  !!REQUEST:MAKE_STAR{speed=100,color=red,brightness=80,size=20}##
+  ```
+
+- Send star:
+  ```
+  !!REQUEST:SEND_STAR##
+  ```
+
+- Confirm send:
+  ```
+  !!CONFIRM:SEND_STAR##
+  ```
+
+- Error message:
+  ```
+  !!REQUEST:ERROR{message=Timeout occurred}##
+  ```
+
+---
 
 ## License
 
-Timo's Cookie License usage cost 1 cookie
+**Timo's Cookie License** — usage cost: **1 cookie**.  
+
+(You may include this README in your project and distribute as you like — just leave a cookie for Timo 🍪.)
