@@ -64,15 +64,11 @@ int main() {
   std::string err;
 
   if (cmdlib::parse(in, cmd, err)) {
-    std::cout << "msgKind: " << cmd.msgKind << "
-";    // "REQUEST"
-    std::cout << "command: " << cmd.command << "
-";    // "MAKE_STAR"
-    std::cout << "speed: " << cmd.getNamed("speed") << "
-"; // "100"
+    std::cout << "msgKind: " << cmd.msgKind << "\n";    // "REQUEST"
+    std::cout << "command: " << cmd.command << "\n";    // "MAKE_STAR"
+    std::cout << "speed: " << cmd.getNamed("speed") << "\n"; // "100"
   } else {
-    std::cerr << "Parse error: " << err << "
-";
+    std::cerr << "Parse error: " << err << "\n";
   }
 
   // Build a command:
