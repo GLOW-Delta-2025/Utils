@@ -6,18 +6,16 @@ A lightweight, cross-platform command **parser & builder** for structured comman
 
 ## Format
 
-Valid command forms:
+Valid command form:
 
-- With message kind (e.g. `REQUEST`, `CONFIRM`, `ERROR`):  
-  `!!MSG_KIND:COMMAND{key=value,key2=value2}##`  
-  Example: `!!REQUEST:MAKE_STAR{speed=100,color=red,brightness=80,size=20}##`
+```
+!![HEADER1[:HEADER2[:...]]]:MSG_KIND:COMMAND{key=value,key2=value2}##
+```
 
-- Command-only (no message kind):  
-  `!!COMMAND{key=value,...}##`  
-  Example: `!!MAKE_STAR{speed=100,color=red}##`
-
-- Confirmation/no-params (braces optional):  
-  `!!CONFIRM:MAKE_STAR##` or `!!MAKE_STAR##`
+- `HEADER1..N` *(optional)* — contextual routing hops such as `MASTER`, `ARM#1`, etc. (all headers before the message kind).  
+- `MSG_KIND` *(required)* — message category (`REQUEST`, `CONFIRM`, `ERROR`, ...).  
+- `COMMAND` *(required)* — the command name (`MAKE_STAR`, `SEND_STAR`, ...).  
+- `{key=value,...}` *(optional)* — named parameters. When no parameters are present the braces may be omitted, e.g. `!!CONFIRM:SEND_STAR##`.
 
 **Important:** positional params (like `100,red,80`) are **no longer supported** — every parameter inside `{}` **must** be `key=value`. If any token has no `=`, the parser returns an error.
 
@@ -31,7 +29,7 @@ Valid command forms:
 - Simple API: build commands programmatically and serialize with `toString()`; parse strings with `parse()`
 - All parameters are **named** (`key=value`) — consistent and explicit
 
-> Note: the library does **not** accept positional parameters, and it does not expect or parse location tokens such as `MASTER` or `[ARM#]`. Use the `MSG_KIND` field for `REQUEST` / `CONFIRM` / `ERROR`, etc.
+> Note: the library does **not** accept positional parameters. Any tokens that appear before `MSG_KIND` are treated as generic headers and preserved round-trip, but they are not interpreted beyond ordering.
 
 ---
 
@@ -40,10 +38,8 @@ Valid command forms:
 - **Old (positional / location):**  
   `!!MASTER:[ARM#]:REQUEST:MAKE_STAR{100,red,80,20}##` → **invalid now**
 
-- **New (named only):**  
-  `!!REQUEST:MAKE_STAR{speed=100,color=red,brightness=80,size=20}##`
-
-- Confirmation: `!!MASTER:CONFIRM:MAKE_STAR##` → `!!CONFIRM:MAKE_STAR##` (no location tokens)
+- **New (named only + headers kept):**  
+  `!!MASTER:ARM#1:REQUEST:MAKE_STAR{speed=100,color=red,brightness=80,size=20}##`
 
 ---
 
@@ -121,7 +117,7 @@ The parser validates and returns an error message when:
 - **Positional-style tokens** inside braces (a token without `=` causes an error: _"Positional params not supported; expected key=value"_)
 - Empty parameter key (e.g. `=value`) is rejected
 
-When `parse()` fails it returns `false` and fills the `error` string (or `String` on Arduino) with a short description.
+When `parse()` fails it returns `false` and fills the `error` string (or `String` on Arduino) with a short description. New error strings include "Malformed braces" (closing brace without opening) and "Incomplete header" (when a message kind and command are not both present).
 
 ---
 
@@ -144,23 +140,34 @@ When `parse()` fails it returns `false` and fills the `error` string (or `String
 
 ## Unit tests
 
-A suite of unit tests is included (STL/C++ and Arduino sketches). To run the C++ tests:
+A C++17 test harness exercises the standard-library build (multi-header support, round-trip serialization, flag parameters, error detection, and clear/overwrite semantics).
 
 ```bash
-g++ -std=c++17 CmdLib_test.cpp -o CmdLib_test
-./CmdLib_test
+g++ -std=c++17 CmdLibTest.cpp -o CmdLibTest
+./CmdLibTest
 ```
 
-Expected output (example):
+Expected output (current suite):
 
 ```
-Tests run: 10
-All tests PASSED
-```
+[PASS] build round-trip
+[PASS] parse with flags
+[PASS] error detection
+[PASS] clear and overwrite
+[PASS] multi-header parse
 
-(Exact message count may vary; the important bit is zero failures.)
+Summary: 5 passed, 0 failed
+```
 
 ---
+
+## Implementation updates (October 2025)
+
+- **Header splitting:** `cmdlib::Command` now keeps leading routing segments in a `headers` container while promoting the final two tokens to `msgKind` and `command`. Both tokens are mandatory; the parser rejects inputs missing either part with an "Incomplete header" error.
+- **Named parameters only:** All parsing paths enforce `key=value` pairs. A positional-style token returns the error _"Positional params not supported; expected key=value"_.
+- **Stricter brace handling:** The parser now catches stray closing braces (`}##`) that lack an opening `{` before them and reports "Malformed braces".
+- **Test coverage:** `CmdLibTest.cpp` was updated to align with the new API, verify multi-hop headers (`A:B:C:D:KIND:CMD`), and assert the new error conditions.
+
 
 ## API Reference (summary)
 

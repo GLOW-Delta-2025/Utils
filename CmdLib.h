@@ -131,6 +131,11 @@ static inline bool parse(const String &input, Command &out, String &error) {
   int braceOpen = input.indexOf('{');
   int braceClose = input.lastIndexOf('}');
 
+  if (braceOpen == -1 && braceClose != -1) {
+    error = "Malformed braces";
+    return false;
+  }
+
   int headerEnd = (braceOpen != -1) ? braceOpen : input.lastIndexOf("##");
   if (headerEnd == -1) { error = "Malformed header"; return false; }
   String header = input.substring(2, headerEnd);
@@ -148,16 +153,11 @@ static inline bool parse(const String &input, Command &out, String &error) {
   }
 
   if (out.headerCount == 0) { error = "Empty header"; return false; }
+  if (out.headerCount == 1) { error = "Incomplete header"; return false; }
 
-  if (out.headerCount >= 2) {
-    out.command = out.headers[out.headerCount - 1];
-    out.msgKind = out.headers[out.headerCount - 2];
-    out.headerCount -= 2;
-  } else {
-    out.command = out.headers[out.headerCount - 1];
-    out.msgKind = "";
-    out.headerCount -= 1;
-  }
+  out.command = out.headers[out.headerCount - 1];
+  out.msgKind = out.headers[out.headerCount - 2];
+  out.headerCount -= 2;
 
   if (braceOpen != -1) {
     if (braceClose == -1 || braceClose < braceOpen) { error = "Malformed braces"; return false; }
@@ -267,6 +267,11 @@ static inline bool parse(const string &input, Command &out, string &error) {
   auto braceOpen = input.find('{');
   auto braceClose = input.rfind('}');
 
+  if (braceOpen == string::npos && braceClose != string::npos) {
+    error = "Malformed braces";
+    return false;
+  }
+
   size_t headerEnd = (braceOpen != string::npos) ? braceOpen : input.size() - 2;
   if (headerEnd == string::npos) { error = "Malformed header"; return false; }
   string header = input.substr(2, headerEnd - 2);
@@ -281,18 +286,12 @@ static inline bool parse(const string &input, Command &out, string &error) {
     if (!token.empty()) out.addHeader(token);
   }
 
-  if (out.headers.size() == 0) { error = "Empty header"; return false; }
+  if (out.headers.empty()) { error = "Empty header"; return false; }
+  if (out.headers.size() == 1) { error = "Incomplete header"; return false; }
 
-  if (out.headers.size() >= 2) {
-    out.command = out.headers.back();
-    out.msgKind = out.headers[out.headers.size() - 2];
-    out.headers.pop_back();
-    out.headers.pop_back();
-  } else {
-    out.command = out.headers.back();
-    out.msgKind.clear();
-    out.headers.pop_back();
-  }
+  out.command = out.headers.back();
+  out.msgKind = out.headers[out.headers.size() - 2];
+  out.headers.resize(out.headers.size() - 2);
 
   if (braceOpen != string::npos) {
     if (braceClose == string::npos || braceClose < braceOpen) { error = "Malformed braces"; return false; }
