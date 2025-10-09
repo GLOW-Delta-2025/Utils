@@ -6,7 +6,6 @@ A lightweight, cross-platform command **parser & builder** for structured comman
 
 ## Format
 
-CmdLib now expects **only named parameters** and **no location/header parts**.  
 Valid command forms:
 
 - With message kind (e.g. `REQUEST`, `CONFIRM`, `ERROR`):  
