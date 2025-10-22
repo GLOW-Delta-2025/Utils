@@ -6,22 +6,28 @@ A lightweight, cross-platform command **parser & builder** for structured comman
 
 ## Format
 
-Valid command form:
+Valid command forms:
 
+**Direct to router (from device):**
 ```
-!![FROM[:TO[:...]]]:MSG_KIND:COMMAND{key=value,key2=value2}##
+!!DESTINATION:MSG_KIND:COMMAND{key=value,...}##
 ```
 
-- `FROM` — the originating sender (e.g., `MASTER`, `ARM1`)
-- `TO` — the intended recipient(s). Can be a single destination or a chain of routing hops
-- Additional headers — optional intermediate routing nodes  
+**Forwarded by router (to device):**
+```
+!!SOURCE:DESTINATION:MSG_KIND:COMMAND{key=value,...}##
+```
+
+**Field definitions:**
+- `DESTINATION` — the intended recipient of the command
+- `SOURCE` *(optional, added by router)* — the originating sender (prepended by router when forwarding)
 - `MSG_KIND` *(required)* — message category (`REQUEST`, `CONFIRM`, `ERROR`, ...).  
 - `COMMAND` *(required)* — the command name (`MAKE_STAR`, `BUILDUP_CLIMAX_CENTER`, ...).  
-- `{key=value,...}` *(optional)* — named parameters. When no parameters are present the braces may be omitted, e.g. `!!CONFIRM:MAKE_STAR##`.
+- `{key=value,...}` *(optional)* — named parameters. When no parameters are present the braces may be omitted, e.g. `!!ARM1:REQUEST:MAKE_STAR##`.
 
 **Important:** All parameters inside `{}` **must** be `key=value` pairs. Positional parameters are not supported.
 
-**Header Convention:** The header format is `!!FROM:TO:MSGTYPE:COMMAND##` where the router adds itself as an intermediate hop when forwarding.
+**Router behavior:** When the router receives a message, it prepends the sender's identity as the first header, converting `!!TO:MSGTYPE:COMMAND##` into `!!FROM:TO:MSGTYPE:COMMAND##` before forwarding to the destination.
 
 ---
 
@@ -38,79 +44,81 @@ Valid command form:
 
 ## Message Flow & Header Routing
 
-In a distributed system with a router intermediary, commands flow through multiple hops. The header chain is **reordered at each hop** to maintain the pattern: `!!FROM:TO:MSGTYPE:COMMAND##`
+In a distributed system with a router intermediary, commands flow through multiple hops. **The router adds the sender as the first header** when forwarding, converting `!!TO:MSGTYPE:COMMAND##` to `!!FROM:TO:MSGTYPE:COMMAND##`
 
 ### Example: MASTER → ARM1 via ROUTER
 
-**Step 1: MASTER sends to ARM1 (through ROUTER)**
+**Step 1: MASTER sends to ROUTER**
 
-MASTER sends:
+MASTER sends directly to the router with only the destination:
 ```
-!!MASTER:ARM1:REQUEST:MAKE_STAR{size=120,color=RED,speed=100,count=6}##
-        ↑     ↑
-      FROM   TO
+!!ARM1:REQUEST:MAKE_STAR{size=120,color=RED,speed=100,count=6}##
+  ↑
+  TO (destination only - MASTER is implicit sender)
 ```
 
-- `FROM` = MASTER (originator)
-- `TO` = ARM1 (intended recipient)
-- The ROUTER receives this and understands it needs to forward to ARM1
+- Format: `!!TO:MSGTYPE:COMMAND##`
+- ROUTER receives this and knows MASTER sent it (implicit from connection)
 
 **Step 2: ROUTER forwards to ARM1**
 
-ROUTER inserts itself as an intermediate hop and reorders headers:
+ROUTER prepends itself as the FROM header and sends:
 ```
 !!MASTER:ARM1:REQUEST:MAKE_STAR{size=120,color=RED,speed=100,count=6}##
-        ↑    ↑
-      FROM  TO (unchanged, ARM1 still the target)
+  ↑      ↑
+  FROM   TO
 ```
 
-Actually receives (with original sender preserved):
-```
-!!MASTER:ARM1:REQUEST:MAKE_STAR{size=120,color=RED,speed=100,count=6}##
-```
+- Format: `!!FROM:TO:MSGTYPE:COMMAND##` (router added MASTER as FROM)
+- ARM1 receives and sees the original sender (MASTER) in `headers[0]`
+- ARM1 sees the command was routed from MASTER
 
-ARM1 sees:
-- `headers[0]` = MASTER (original source)
-- `headers[1]` = ARM1 (itself, confirmed as destination)
-- Understands the message originated from MASTER
+**Step 3: ARM1 responds to ROUTER**
 
-**Step 3: ARM1 responds with CONFIRM**
-
-ARM1 sends back:
+ARM1 sends back with the original sender as destination:
 ```
-!!ARM1:MASTER:CONFIRM:MAKE_STAR{size=120,color=RED,speed=100,count=6}##
-       ↑     ↑
-      FROM  TO (reversed: now sending TO the original MASTER)
+!!MASTER:CONFIRM:MAKE_STAR{size=120,color=RED,speed=100,count=6}##
+  ↑
+  TO (destination only - ARM1 is implicit sender)
 ```
 
-- `FROM` = ARM1 (now the sender)
-- `TO` = MASTER (the original sender becomes the recipient)
+- Format: `!!TO:MSGTYPE:COMMAND##`
+- ROUTER receives this from ARM1 and knows ARM1 is the sender
 
 **Step 4: ROUTER forwards response back to MASTER**
 
-ROUTER sees ARM1→MASTER and routes accordingly:
+ROUTER prepends ARM1 as the FROM header:
 ```
 !!ARM1:MASTER:CONFIRM:MAKE_STAR{size=120,color=RED,speed=100,count=6}##
-       ↑     ↑
-      FROM  TO
+  ↑    ↑
+  FROM TO
 ```
 
-MASTER receives and sees:
-- `headers[0]` = ARM1 (response from ARM1)
-- `headers[1]` = MASTER (itself, confirmed as destination)
+- Format: `!!FROM:TO:MSGTYPE:COMMAND##` (router added ARM1 as FROM)
+- MASTER receives and sees the response came from ARM1
 
 ### Header Pattern Summary
 
-For any command traversing through a router:
+**Devices sending TO router (direct connection):**
+```
+!!TO:MSGTYPE:COMMAND##
+```
+Only specifies the destination; sender is implicit.
 
-| Step | Sender | Header Format | Meaning |
-|------|--------|---------------|---------|
-| 1 | MASTER | `!!MASTER:ARM1:...##` | MASTER → ARM1 (via ROUTER) |
-| 2 | ROUTER → ARM1 | `!!MASTER:ARM1:...##` | Forward: MASTER's message destined for ARM1 |
-| 3 | ARM1 | `!!ARM1:MASTER:...##` | ARM1 → MASTER (via ROUTER) |
-| 4 | ROUTER → MASTER | `!!ARM1:MASTER:...##` | Forward: ARM1's message destined for MASTER |
+**Router forwarding between devices:**
+```
+!!FROM:TO:MSGTYPE:COMMAND##
+```
+Router inserts the source as the first header to maintain communication context.
 
-**Key insight:** The first header is **always** the originator, and the second header is **always** the immediate recipient. The router does **not** insert itself into the header chain—it simply checks the TO field and routes accordingly.
+| Step | Sender | Format | Message |
+|------|--------|--------|---------|
+| 1 | MASTER → ROUTER | `!!ARM1:REQUEST:MAKE_STAR##` | Send to ARM1 |
+| 2 | ROUTER → ARM1 | `!!MASTER:ARM1:REQUEST:MAKE_STAR##` | From MASTER, to ARM1 |
+| 3 | ARM1 → ROUTER | `!!MASTER:CONFIRM:MAKE_STAR##` | Send to MASTER |
+| 4 | ROUTER → MASTER | `!!ARM1:MASTER:CONFIRM:MAKE_STAR##` | From ARM1, to MASTER |
+
+**Key insight:** The router acts as a bridge that converts single-header messages (`!!TO:...##`) into two-header messages (`!!FROM:TO:...##`) by prepending the sender's identity. This allows both direct point-to-point communication through the router and proper message tracing.
 
 ### ADD_STAR Command
 
@@ -247,25 +255,28 @@ void loop() { }
 
 ## Header Routing
 
-Headers are preserved in order and represent the communication path:
+The header structure depends on whether a message is being sent directly to the router or being forwarded by the router:
 
-**Two-hop example (sender → receiver via router):**
+**Direct message to router (from device):**
 ```
-!!SOURCE:DESTINATION:REQUEST:COMMAND##
+!!DESTINATION:MSGTYPE:COMMAND##
 ```
+Only one header—the intended destination. The sender is implicit (known by the router from the connection).
 
-In this case:
-- `headers[0]` = `SOURCE` (originator/sender)
-- `headers[1]` = `DESTINATION` (intended recipient)
-- `msgKind` = `REQUEST`
-- `command` = `COMMAND`
-
-The first header is **always** the originator, and the second header is **always** the intended recipient. Additional headers can represent additional routing information or context.
+**Forwarded message from router (to device):**
+```
+!!SOURCE:DESTINATION:MSGTYPE:COMMAND##
+```
+Two headers—the source (added by router) and the destination. This provides full context about where the message originated.
 
 **Accessing headers in code:**
 ```cpp
-String sender = cmd.getHeader(0);       // The originator
-String recipient = cmd.getHeader(1);    // The intended recipient
+// When receiving from router with both headers
+String source = cmd.getHeader(0);         // Who sent it (added by router)
+String destination = cmd.getHeader(1);    // Where it's going
+
+// When building a response back through router
+response.addHeader(cmd.getHeader(0));     // Echo the source as destination
 ```
 
 ---
@@ -481,5 +492,3 @@ Serial.println(errResp.toString());
 ## License
 
 **Timo's Cookie License** — usage cost: **1 cookie**.  
-
-(You may include this README in your project and distribute as you like — just leave a cookie for Timo 🍪.)
